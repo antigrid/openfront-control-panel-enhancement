@@ -1,0 +1,38 @@
+# macOS
+.DS_Store
+.AppleDouble
+.LSOverride
+
+# Thumbnails
+._*
+
+# Spotlight & Time Machine
+.Spotlight-V100
+.Trashes
+.TimeMachineTrash
+
+# VS Code
+.vscode/
+
+# JetBrains
+.idea/
+
+# Node
+node_modules/
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+
+# Build outputs
+/dist
+/build
+/coverage
+
+# Env files
+.env
+.env.*
+
+# User-specific files
+*.local
+*.log
