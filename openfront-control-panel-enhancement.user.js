@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         OpenFront.io - Control Panel Enhancement
 // @namespace    https://github.com/antigrid/openfront-control-panel-enhancement
-// @version      0.0.1
+// @version      0.0.2
 // @description  Displays current and remaining troop percentages in the control panel
 // @author       antigrid (Discord: webdev.js)
 // @match        https://*.openfront.io/*
@@ -40,10 +40,10 @@
   };
 
   let cachedElements = {
-    troopsRow: null,
-    attackRatioContainer: null,
+    troopsValueContainer: null,
+    attackSlider: null,
     currentPercentSpan: null,
-    remainingPercentSpan: null,
+    remainingPercentBadge: null,
   };
 
   function renderTroops(troops, fixedPoints) {
@@ -85,25 +85,41 @@
     return COLORS.EXCELLENT;
   }
 
-  function findTroopsRow(panel) {
-    const rows = panel.querySelectorAll(".flex.justify-between");
-    for (const row of rows) {
-      const valueSpan = row.querySelector('span[translate="no"]');
-      if (valueSpan) {
-        const rateSpan = valueSpan.querySelector('span[translate="no"]');
-        if (rateSpan && rateSpan.textContent.includes("(+")) {
-          return row;
-        }
-      }
+  function getPanelRoot(panel) {
+    return panel.renderRoot || panel.shadowRoot || panel;
+  }
+
+  function findDesktopTroopValueContainer(panel) {
+    const root = getPanelRoot(panel);
+    const soldierIcons = root.querySelectorAll('img[src*="SoldierIcon.svg"]');
+
+    for (const icon of soldierIcons) {
+      const bar = icon.closest('div[class*="bg-gray-900"][class*="overflow-hidden"][class*="relative"]');
+      if (!bar) continue;
+
+      const overlay = bar.querySelector('div[translate="no"][class*="text-xl"]');
+      const currentValue = overlay?.firstElementChild;
+      if (currentValue) return currentValue;
     }
+
     return null;
   }
 
-  function findAttackRatioContainer(panel) {
-    const attackRatioInput = panel.querySelector("#attack-ratio");
-    if (!attackRatioInput) return null;
-    const container = attackRatioInput.closest(".relative.mb-0, .relative.mb-4");
-    return container?.querySelector("label") || null;
+  function findAttackSlider(panel) {
+    const root = getPanelRoot(panel);
+    const sliders = root.querySelectorAll('input[type="range"][min="1"][max="100"]');
+
+    for (const slider of sliders) {
+      const row = slider.parentElement;
+      if (!row?.matches('.flex.items-center.gap-2, .flex.gap-2.items-center')) continue;
+
+      const swordIcon = row.querySelector('img[src*="SwordIcon"]');
+      const leftBadge = row.querySelector('div[class*="border-gray-600"][class*="cursor-pointer"]');
+      if (swordIcon) return slider;
+      if (leftBadge) return slider;
+    }
+
+    return null;
   }
 
   function getOrCreateSpan(className, parent, position = "append") {
@@ -111,8 +127,8 @@
     if (!span) {
       span = document.createElement("span");
       span.className = className;
-      span.style.fontSize = "12px";
-      span.style.fontWeight = "normal";
+      span.style.fontSize = "14px";
+      span.style.fontWeight = "700";
       if (position === "prepend") {
         parent.insertBefore(span, parent.firstChild);
       } else {
@@ -120,6 +136,18 @@
       }
     }
     return span;
+  }
+
+  function getOrCreateRemainingBadge(parent) {
+    let badge = parent.querySelector(".ofio-remaining-pct-badge");
+    if (!badge) {
+      badge = document.createElement("div");
+      badge.className =
+        "ofio-remaining-pct-badge flex items-center gap-1 shrink-0 border border-gray-600 rounded-md p-1 text-sm font-bold";
+      badge.style.minWidth = "60px";
+      parent.appendChild(badge);
+    }
+    return badge;
   }
 
   function updateDisplay(panel) {
@@ -134,33 +162,40 @@
     const remainingTroops = troops * (1 - attackRatio);
     const remainingPct = (remainingTroops / maxTroops) * 100;
 
-    if (!cachedElements.troopsRow || !panel.contains(cachedElements.troopsRow)) {
-      cachedElements.troopsRow = findTroopsRow(panel);
+    const root = getPanelRoot(panel);
+
+    if (!cachedElements.troopsValueContainer || !root.contains(cachedElements.troopsValueContainer)) {
+      cachedElements.troopsValueContainer = findDesktopTroopValueContainer(panel);
       cachedElements.currentPercentSpan = null;
     }
 
-    if (cachedElements.troopsRow) {
-      const valueSpan = cachedElements.troopsRow.querySelector('span[translate="no"]');
-      if (valueSpan) {
-        cachedElements.currentPercentSpan = getOrCreateSpan("ofio-current-pct", valueSpan, "prepend");
-        cachedElements.currentPercentSpan.textContent = `${currentPct.toFixed(0)}% `;
-        cachedElements.currentPercentSpan.style.color = getPercentageColor(currentPct);
-      }
+    if (cachedElements.troopsValueContainer) {
+      cachedElements.currentPercentSpan = getOrCreateSpan(
+        "ofio-current-pct",
+        cachedElements.troopsValueContainer,
+        "prepend",
+      );
+      cachedElements.currentPercentSpan.textContent = `${currentPct.toFixed(0)}% `;
+      cachedElements.currentPercentSpan.style.color = getPercentageColor(currentPct);
+      cachedElements.currentPercentSpan.style.marginRight = "auto";
+      cachedElements.currentPercentSpan.style.marginLeft = "6px";
+      cachedElements.currentPercentSpan.style.textShadow = "0 1px 1px rgba(0,0,0,0.8)";
     }
 
-    if (!cachedElements.attackRatioContainer || !panel.contains(cachedElements.attackRatioContainer)) {
-      cachedElements.attackRatioContainer = findAttackRatioContainer(panel);
-      cachedElements.remainingPercentSpan = null;
+    if (!cachedElements.attackSlider || !root.contains(cachedElements.attackSlider)) {
+      cachedElements.attackSlider = findAttackSlider(panel);
+      cachedElements.remainingPercentBadge = null;
     }
 
-    if (cachedElements.attackRatioContainer) {
-      const translateSpan = cachedElements.attackRatioContainer.querySelector('span[translate="no"]');
-      if (translateSpan) {
-        cachedElements.remainingPercentSpan = getOrCreateSpan("ofio-remaining-pct", translateSpan, "append");
-        cachedElements.remainingPercentSpan.textContent = ` → ${remainingPct.toFixed(0)}% (${renderTroops(remainingTroops)})`;
-        cachedElements.remainingPercentSpan.style.color =
-          remainingPct > 55 ? COLORS.GOOD : getPercentageColor(remainingPct);
-      }
+    if (cachedElements.attackSlider) {
+      const attackRow = cachedElements.attackSlider.parentElement;
+      if (!attackRow) return;
+
+      cachedElements.remainingPercentBadge = getOrCreateRemainingBadge(attackRow);
+      cachedElements.remainingPercentBadge.textContent = `→ ${remainingPct.toFixed(0)}%`;
+      cachedElements.remainingPercentBadge.title = `Remaining troops: ${renderTroops(remainingTroops)}`;
+      cachedElements.remainingPercentBadge.style.color =
+        remainingPct > 55 ? COLORS.GOOD : getPercentageColor(remainingPct);
     }
   }
 
