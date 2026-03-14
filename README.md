@@ -3,7 +3,7 @@
 Adds troop percentage indicators to OpenFront.io’s control panel:
 
 - **Current troops %** (colored by thresholds)
-- **Remaining troops %** after applying the attack ratio (also shows remaining troops count)
+- **Remaining troops %** after applying the attack ratio
 
 ## Screenshots
 
