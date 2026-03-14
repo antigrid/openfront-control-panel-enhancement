@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         OpenFront.io - Control Panel Enhancement
 // @namespace    https://github.com/antigrid/openfront-control-panel-enhancement
-// @version      0.0.2
+// @version      0.0.3
 // @description  Displays current and remaining troop percentages in the control panel
 // @author       antigrid (Discord: webdev.js)
 // @match        https://*.openfront.io/*
@@ -37,13 +37,6 @@
     HIGH_CRITICAL: 82,
     REMAINING_CRITICAL: 15,
     REMAINING_WARNING: 23,
-  };
-
-  let cachedElements = {
-    troopsValueContainer: null,
-    attackSlider: null,
-    currentPercentSpan: null,
-    remainingPercentBadge: null,
   };
 
   function renderTroops(troops, fixedPoints) {
@@ -89,46 +82,55 @@
     return panel.renderRoot || panel.shadowRoot || panel;
   }
 
-  function findDesktopTroopValueContainer(panel) {
-    const root = getPanelRoot(panel);
-    const soldierIcons = root.querySelectorAll('img[src*="SoldierIcon.svg"]');
+  function getTroopBars(root) {
+    return Array.from(
+      root.querySelectorAll('div[class*="bg-gray-900/60"][class*="overflow-hidden"][class*="relative"]'),
+    );
+  }
 
-    for (const icon of soldierIcons) {
-      const bar = icon.closest('div[class*="bg-gray-900"][class*="overflow-hidden"][class*="relative"]');
-      if (!bar) continue;
+  function findDesktopTroopCurrentSide(root) {
+    for (const bar of getTroopBars(root)) {
+      const slash = Array.from(bar.querySelectorAll("span")).find((span) => span.textContent?.trim() === "/");
+      if (!slash) continue;
 
-      const overlay = bar.querySelector('div[translate="no"][class*="text-xl"]');
-      const currentValue = overlay?.firstElementChild;
-      if (currentValue) return currentValue;
+      const currentSide = slash.previousElementSibling;
+      if (currentSide instanceof HTMLElement) return currentSide;
     }
 
     return null;
   }
 
-  function findAttackSlider(panel) {
-    const root = getPanelRoot(panel);
+  function findAttackSliderRows(root) {
     const sliders = root.querySelectorAll('input[type="range"][min="1"][max="100"]');
+    const matches = [];
 
     for (const slider of sliders) {
-      const row = slider.parentElement;
-      if (!row?.matches('.flex.items-center.gap-2, .flex.gap-2.items-center')) continue;
+      let node = slider.parentElement;
+      while (node && node !== root) {
+        const hasDirectSliderChild = Array.from(node.children).some((child) => child === slider);
+        const hasDirectDesktopBadgeChild = Array.from(node.children).some((child) =>
+          child.matches?.('div[class*="cursor-pointer"][class*="w-[8rem]"]'),
+        );
 
-      const swordIcon = row.querySelector('img[src*="SwordIcon"]');
-      const leftBadge = row.querySelector('div[class*="border-gray-600"][class*="cursor-pointer"]');
-      if (swordIcon) return slider;
-      if (leftBadge) return slider;
+        if (hasDirectSliderChild && hasDirectDesktopBadgeChild) {
+          if (!matches.some((match) => match.row === node)) {
+            matches.push({ slider, row: node });
+          }
+          break;
+        }
+        node = node.parentElement;
+      }
     }
 
-    return null;
+    return matches;
   }
 
-  function getOrCreateSpan(className, parent, position = "append") {
-    let span = parent.querySelector(`.${className}`);
+  function getOrCreateSpan(className, parent, position = "append", text = "") {
+    let span = parent.querySelector(`:scope > .${className}`);
     if (!span) {
       span = document.createElement("span");
       span.className = className;
-      span.style.fontSize = "14px";
-      span.style.fontWeight = "700";
+      span.textContent = text;
       if (position === "prepend") {
         parent.insertBefore(span, parent.firstChild);
       } else {
@@ -139,15 +141,47 @@
   }
 
   function getOrCreateRemainingBadge(parent) {
-    let badge = parent.querySelector(".ofio-remaining-pct-badge");
+    let badge = parent.querySelector(":scope > .ofio-remaining-pct-badge");
     if (!badge) {
       badge = document.createElement("div");
       badge.className =
-        "ofio-remaining-pct-badge flex items-center gap-1 shrink-0 border border-gray-600 rounded-md p-1 text-sm font-bold";
-      badge.style.minWidth = "60px";
+        "ofio-remaining-pct-badge flex items-center shrink-0 border border-gray-600 rounded-md font-bold py-1 text-sm justify-center";
       parent.appendChild(badge);
     }
     return badge;
+  }
+
+  function styleCurrentPercentSpan(span) {
+    span.style.fontWeight = "700";
+    span.style.textShadow = "0 1px 1px rgba(0,0,0,0.8)";
+    span.style.display = "inline-block";
+    span.style.fontSize = "14px";
+    span.style.marginRight = "auto";
+    span.style.marginLeft = "4px";
+  }
+
+  function styleRemainingBadge(badge) {
+    badge.style.height = "-webkit-fill-available";
+    badge.style.minWidth = "56px";
+  }
+
+  function removeElement(element) {
+    if (element?.parentNode) {
+      element.parentNode.removeChild(element);
+    }
+  }
+
+  function cleanupInjectedEnhancements(root) {
+    for (const bar of getTroopBars(root)) {
+      const slash = Array.from(bar.querySelectorAll("span")).find((span) => span.textContent?.trim() === "/");
+      if (slash) continue;
+      removeElement(bar.querySelector(".ofio-current-pct"));
+    }
+
+    const badges = root.querySelectorAll(".ofio-remaining-pct-badge");
+    for (const badge of badges) {
+      removeElement(badge);
+    }
   }
 
   function updateDisplay(panel) {
@@ -156,6 +190,8 @@
 
     const troops = panel._troops ?? player.troops();
     const maxTroops = panel._maxTroops ?? panel.game.config().maxTroops(player);
+    if (!maxTroops) return;
+
     const attackRatio = panel.uiState?.attackRatio ?? panel.attackRatio ?? 0.2;
 
     const currentPct = (troops / maxTroops) * 100;
@@ -163,39 +199,29 @@
     const remainingPct = (remainingTroops / maxTroops) * 100;
 
     const root = getPanelRoot(panel);
+    cleanupInjectedEnhancements(root);
 
-    if (!cachedElements.troopsValueContainer || !root.contains(cachedElements.troopsValueContainer)) {
-      cachedElements.troopsValueContainer = findDesktopTroopValueContainer(panel);
-      cachedElements.currentPercentSpan = null;
-    }
+    const desktopTroopCurrentSide = findDesktopTroopCurrentSide(root);
+    const attackSliderRows = findAttackSliderRows(root);
 
-    if (cachedElements.troopsValueContainer) {
-      cachedElements.currentPercentSpan = getOrCreateSpan(
+    if (desktopTroopCurrentSide) {
+      const currentPercentSpan = getOrCreateSpan(
         "ofio-current-pct",
-        cachedElements.troopsValueContainer,
+        desktopTroopCurrentSide,
         "prepend",
+        `${currentPct.toFixed(0)}% `,
       );
-      cachedElements.currentPercentSpan.textContent = `${currentPct.toFixed(0)}% `;
-      cachedElements.currentPercentSpan.style.color = getPercentageColor(currentPct);
-      cachedElements.currentPercentSpan.style.marginRight = "auto";
-      cachedElements.currentPercentSpan.style.marginLeft = "6px";
-      cachedElements.currentPercentSpan.style.textShadow = "0 1px 1px rgba(0,0,0,0.8)";
+      currentPercentSpan.textContent = `${currentPct.toFixed(0)}% `;
+      currentPercentSpan.style.color = getPercentageColor(currentPct);
+      styleCurrentPercentSpan(currentPercentSpan);
     }
 
-    if (!cachedElements.attackSlider || !root.contains(cachedElements.attackSlider)) {
-      cachedElements.attackSlider = findAttackSlider(panel);
-      cachedElements.remainingPercentBadge = null;
-    }
-
-    if (cachedElements.attackSlider) {
-      const attackRow = cachedElements.attackSlider.parentElement;
-      if (!attackRow) return;
-
-      cachedElements.remainingPercentBadge = getOrCreateRemainingBadge(attackRow);
-      cachedElements.remainingPercentBadge.textContent = `→ ${remainingPct.toFixed(0)}%`;
-      cachedElements.remainingPercentBadge.title = `Remaining troops: ${renderTroops(remainingTroops)}`;
-      cachedElements.remainingPercentBadge.style.color =
-        remainingPct > 55 ? COLORS.GOOD : getPercentageColor(remainingPct);
+    for (const attackSliderInfo of attackSliderRows) {
+      const remainingPercentBadge = getOrCreateRemainingBadge(attackSliderInfo.row);
+      remainingPercentBadge.textContent = `→ ${remainingPct.toFixed(0)}%`;
+      remainingPercentBadge.title = `Remaining troops: ${renderTroops(remainingTroops)}`;
+      remainingPercentBadge.style.color = remainingPct > 55 ? COLORS.GOOD : getPercentageColor(remainingPct);
+      styleRemainingBadge(remainingPercentBadge);
     }
   }
 
@@ -230,6 +256,7 @@
     };
 
     proto._ofioPatched = true;
+    updateDisplay(panel);
   }
 
   patchControlPanel();
